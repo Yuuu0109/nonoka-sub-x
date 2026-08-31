@@ -16,11 +16,13 @@ export interface FineSubSettingsState {
   baseUrls: FineSubBaseUrlState[];
   modelRouting: FineSubModelRoutingState;
   llmKeyConfigured: boolean;
+  // 已保存的全局模型是否可用：选好提供商与模型，且凭据或本地 CLI 到位。
+  llmReady: boolean;
   retrievalKeyConfigured: boolean;
   protection: "empty" | "protected" | "plaintext" | "unreadable";
 }
 
-export type FineSubModelProviderID = "gemini-free" | "gemini-paid" | "openai" | "anthropic";
+export type FineSubModelProviderID = "gemini-free" | "gemini-paid" | "openai" | "anthropic" | "openai-compat" | "anthropic-compat" | "local-codex" | "local-agy";
 
 export interface FineSubModelOption {
   id: string;
@@ -39,6 +41,17 @@ export interface FineSubModelProvider {
   label: string;
   mode: "select" | "input";
   models: FineSubModelOption[];
+  // 选中该提供商时预填的模型；input 模式为空。
+  defaultModel: string;
+  // 本地 Agent 提供商用自己的 CLI 订阅运行，不需要 API Key；available 表示该 CLI 是否已在 PATH 中。
+  requiresKey: boolean;
+  available: boolean;
+  // 该提供商对应的 Key 与 Base URL 设置项；本地 Agent 两者皆为空。
+  keyName: string;
+  baseUrlName: string;
+  // 兼容提供商没有官方地址兜底，Base URL 是必填项。
+  customEndpoint: boolean;
+  keyConfigured: boolean;
 }
 
 export interface FineSubModelRoutingState {

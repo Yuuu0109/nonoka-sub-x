@@ -29,7 +29,12 @@ from .document_store import (
 from .peaks import generate_peaks
 from .projector import ProjectionError, project_edit_document
 from .provision import RuntimeProvisionError, RuntimeProvisioner
-from .settings import FineSubSettings
+from .settings import (
+    FineSubSettings,
+    LOCAL_AGENT_PROVIDERS,
+    local_agent_executable,
+    local_agent_path_entries,
+)
 
 
 STATES = {"queued", "running", "completed", "failed", "cancelled", "interrupted"}
@@ -187,11 +192,24 @@ def runtime_report(settings: FineSubSettings | None = None, provisioner: Runtime
         if missing_models:
             asr_issues.append(_issue("missing_model", "ASR 所需模型尚未安装：" + "、".join(missing_models)))
 
-    settings_snapshot = settings.snapshot() if settings is not None else {"llmKeyConfigured": False, "retrievalKeyConfigured": False}
-    local_agent = next((name for name in ("codex", "claude", "agy") if shutil.which(name)), "")
+    settings_snapshot = settings.snapshot() if settings is not None else {"llmReady": False, "retrievalKeyConfigured": False}
+    # A routable provider first — the Codex app hides its CLI in a directory
+    # PATH never sees, so a plain `which` reports "no agent" on a machine that
+    # has one. The remaining vendors have no desktop route yet, so PATH is the
+    # whole question for them.
+    local_agent = next(
+        (
+            LOCAL_AGENT_PROVIDERS[provider]["command"]
+            for provider in LOCAL_AGENT_PROVIDERS
+            if local_agent_executable(provider) is not None
+        ),
+        "",
+    ) or next((name for name in ("codex", "claude", "agy") if shutil.which(name)), "")
     llm_issues = list(asr_issues)
-    if not settings_snapshot.get("llmKeyConfigured") and not local_agent:
-        llm_issues.append(_issue("missing_llm_key", "未配置 Gemini/LLM Key，也未检测到可用的本地 Agent"))
+    # 装了 CLI 不等于配好了模型：只有设置里保存下来的全局模型（提供商 + 模型，
+    # 且凭据或 CLI 到位）才放行 LLM 环节。
+    if not settings_snapshot.get("llmReady"):
+        llm_issues.append(_issue("missing_llm_key", "尚未配置模型提供商，请在设置里选择提供商与全局模型并保存"))
 
     knowledge_issues = list(llm_issues)
     managed_resources = {item["id"]: item for item in managed.get("resources", [])} if managed else {}
@@ -600,7 +618,12 @@ class LocalProvider:
             path = directory / (name + suffixes[name])
             path.write_text(content, encoding="utf-8")
             manifest["artifacts"][name] = {"uri": path.resolve().as_uri(), "bytes": path.stat().st_size}
-        document = self._project_manifest(video_id, value, manifest)
+        document = self._project_manifest(
+            video_id,
+            value,
+            manifest,
+            relaxed_srt=bool(value.get("relaxed_srt")),
+        )
         self._write_optional_peaks(video_id, str(value.get("source_path") or ""), float(value.get("duration") or 0))
         return document
 
@@ -654,6 +677,11 @@ class LocalProvider:
         request = _read_json_when_free(task_dir / "request.json")
         command = self._worker_command(task_id, task_dir)
         environment = self._provisioner.worker_environment() if self._provisioner is not None else os.environ.copy()
+        # The engine resolves an agent CLI by name off PATH, so an install that
+        # is not on PATH has to be put there for the worker.
+        agent_dirs = local_agent_path_entries()
+        if agent_dirs:
+            environment["PATH"] = os.pathsep.join([*agent_dirs, environment.get("PATH", "")])
         project_src = Path(__file__).resolve().parents[1]
         python_paths = [str(project_src), str(self.vendor / "src")]
         if environment.get("PYTHONPATH"):
@@ -754,7 +782,14 @@ class LocalProvider:
                 self._processes.pop(task_id, None)
                 self._threads.pop(task_id, None)
 
-    def _project_manifest(self, video_id: str, metadata: Mapping[str, Any], manifest: Mapping[str, Any]) -> dict[str, Any]:
+    def _project_manifest(
+        self,
+        video_id: str,
+        metadata: Mapping[str, Any],
+        manifest: Mapping[str, Any],
+        *,
+        relaxed_srt: bool = False,
+    ) -> dict[str, Any]:
         if not _safe_component(video_id):
             raise ProviderError("invalid_document", "Invalid document id")
         entries = manifest.get("artifacts")
@@ -785,6 +820,7 @@ class LocalProvider:
             title=str(metadata.get("title") or video_id),
             source=str(metadata.get("path") or metadata.get("source_path") or ""),
             fingerprint=str(metadata.get("fingerprint") or "") or None,
+            relaxed_srt=relaxed_srt,
         )
         return self.documents.create(video_id, projection, artifacts=manifest, replace_default=True)
 
