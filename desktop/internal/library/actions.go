@@ -112,7 +112,7 @@ func (s *Service) PickRelink(id string) (Entry, error) {
 	path, err := app.Dialog.OpenFile().
 		SetTitle("重新定位本地视频").
 		AttachToWindow(window).
-		AddFilter("视频文件", "*.mp4;*.m4v;*.mov;*.mkv;*.webm").
+		AddFilter("视频文件", "*.mp4;*.m4v;*.mov;*.mkv;*.webm;*.ts").
 		PromptForSingleSelection()
 	if dialogCancelled(err) {
 		err = nil
@@ -187,9 +187,9 @@ func (s *Service) MediaURL(id string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	path := s.cachedPath(id)
-	if path == "" {
-		path = entry.SourcePath
+	path, err := s.preparePlaybackMedia(id, entry)
+	if err != nil {
+		return "", err
 	}
 	if path == "" || !fileExists(path) {
 		return "", errors.New("local media is missing; relink it first")
@@ -199,15 +199,7 @@ func (s *Service) MediaURL(id string) (string, error) {
 	defer s.mu.Unlock()
 	if s.media == nil {
 		server, err := newLoopbackMediaServer(func(mediaID string) string {
-			cached := s.cachedPath(mediaID)
-			if cached != "" {
-				return cached
-			}
-			entry, lookupErr := s.entryByID(mediaID)
-			if lookupErr != nil {
-				return ""
-			}
-			return entry.SourcePath
+			return s.playbackSourcePath(mediaID)
 		})
 		if err != nil {
 			return "", err

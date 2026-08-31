@@ -31,7 +31,7 @@ const (
 )
 
 var supportedExtensions = map[string]struct{}{
-	".mp4": {}, ".m4v": {}, ".mov": {}, ".mkv": {}, ".webm": {},
+	".mp4": {}, ".m4v": {}, ".mov": {}, ".mkv": {}, ".webm": {}, ".ts": {},
 }
 
 type Entry struct {
@@ -251,7 +251,7 @@ func (s *Service) PickAndImport() (ImportResult, error) {
 	paths, err := app.Dialog.OpenFile().
 		SetTitle("选择本地媒体").
 		AttachToWindow(window).
-		AddFilter("视频文件", "*.mp4;*.m4v;*.mov;*.mkv;*.webm").
+		AddFilter("视频文件", "*.mp4;*.m4v;*.mov;*.mkv;*.webm;*.ts").
 		PromptForMultipleSelection()
 	if dialogCancelled(err) {
 		err = nil

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Events } from "@wailsio/runtime";
 import "./WindowDropOverlay.css";
 
-const videoExtensions = new Set(["mp4", "m4v", "mov", "mkv", "webm"]);
+const videoExtensions = new Set(["mp4", "m4v", "mov", "mkv", "webm", "ts"]);
 
 function isFileDrag(event: DragEvent): boolean {
   return Array.from(event.dataTransfer?.types ?? []).includes("Files");
@@ -76,8 +76,8 @@ export function WindowDropOverlay({ onFilesDropped }: WindowDropOverlayProps) {
   }), [onFilesDropped]);
 
   return (
-    <div className={`drop-overlay ${active ? "active" : ""}`} data-file-drop-target aria-hidden={!active}>
-      <div className="drop-overlay-card"><span>＋</span><strong>松手即可导入视频</strong><small>MP4 / M4V / MOV / MKV / WebM</small></div>
+      <div className={`drop-overlay ${active ? "active" : ""}`} data-file-drop-target aria-hidden={!active}>
+      <div className="drop-overlay-card"><span>＋</span><strong>松手即可导入视频</strong><small>MP4 / M4V / MOV / MKV / WebM / TS</small></div>
     </div>
   );
 }

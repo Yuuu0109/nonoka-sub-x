@@ -71,6 +71,27 @@ func TestImportPersistsLocalPathDeduplicatesAndCreatesThumbnail(t *testing.T) {
 	}
 }
 
+func TestImportAcceptsTransportStreamMedia(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source.ts")
+	if err := os.WriteFile(source, []byte("media-fixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tools := fixtureTools{metadata: Metadata{Duration: 42.5, Width: 1920, Height: 1080, HasVideo: true, HasAudio: true}}
+	service, err := newServiceWithTools(filepath.Join(root, "data"), tools, tools)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result := service.Import([]string{source})
+	if len(result.Failed) != 0 || len(result.Added) != 1 {
+		t.Fatalf("unexpected import result: %#v", result)
+	}
+	if got := service.List(); len(got) != 1 || got[0].SourcePath != source {
+		t.Fatalf("library entries: %#v", got)
+	}
+}
+
 // Subtitles adopted from the cloud need somewhere to live before the video is
 // anywhere on this machine. The placeholder is an ordinary entry with no source
 // file, and importing that file later has to fill the same entry in rather than
