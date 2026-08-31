@@ -1,55 +1,45 @@
-import { ASS_FMT_DEFAULT, BUNDLED_FONTS } from './constants';
-import { assColor } from './utils';
-import type { AssStyle } from './types';
+import { BUNDLED_FONTS } from './constants.ts';
+import { assColor } from './utils.ts';
+import { assHeadOf, composeSheet, resolveStyleIn } from '../subtitles/styles.ts';
+import type { StyleSheet } from '../subtitles/styles.ts';
+import type { Lang } from './types';
 
-// ASS 模板解析（预览渲染 + 绑定下拉共用）。只解析 Style 行 + PlayRes；
-// Format 行决定字段顺序，缺省用标准 23 字段。解析结果是模块级单例：
-// 模板是全局的，一份解析全编辑器共用。
+// 本机样式表的模块级单例：样式是全局的，一份解析全编辑器共用。解析、合并与 ASS 头
+// 的拼法都在 src/subtitles/styles.ts（插件宿主共用同一份），这里只管「当前装的是哪一份」。
 
-let styleMap: Record<string, AssStyle> = {};
-let styleNames: string[] = [];
-let playRes = { x: 1920, y: 1080 };
+export { mergeStyleText, parseSheet } from '../subtitles/styles.ts';
 
-export const getStyleMap = () => styleMap;
-export const getStyleNames = () => styleNames;
-export const getPlayRes = () => playRes;
+let sheet: StyleSheet = composeSheet("");
 
-export function parseAssTemplate(text: string) {
-  styleMap = {};
-  styleNames = [];
-  playRes = { x: 1920, y: 1080 };
-  let fmtKeys = ASS_FMT_DEFAULT;
-  for (const raw of (text || "").split(/\r?\n/)) {
-    const line = raw.trim(), low = line.toLowerCase();
-    if (low.startsWith("[events]")) break;   // Events 段（若有）不解析
-    if (low.startsWith("playresx:")) { playRes.x = +line.slice(9).trim() || 1920; continue; }
-    if (low.startsWith("playresy:")) { playRes.y = +line.slice(9).trim() || 1080; continue; }
-    if (low.startsWith("format:")) { fmtKeys = low.slice(7).split(",").map(s => s.trim()); continue; }
-    if (!low.startsWith("style:")) continue;
-    const parts = line.slice(6).split(",").map(s => s.trim());
-    const g = (k: string) => { const i = fmtKeys.indexOf(k); return i >= 0 && i < parts.length ? parts[i] : ""; };
-    const st: AssStyle = {
-      name: g("name"), font: g("fontname"), size: +g("fontsize") || 70,
-      c1: g("primarycolour"), c3: g("outlinecolour"), c4: g("backcolour"),
-      bold: +g("bold") || 0, italic: +g("italic") || 0,
-      scx: +g("scalex") || 100, scy: +g("scaley") || 100, sp: +g("spacing") || 0,
-      outline: +g("outline") || 0, shadow: +g("shadow") || 0,
-      align: +g("alignment") || 2,
-      ml: +g("marginl") || 0, mr: +g("marginr") || 0, mv: +g("marginv") || 0,
-    };
-    if (st.name && !styleMap[st.name]) { styleMap[st.name] = st; styleNames.push(st.name); }
-  }
+export const getStyleMap = () => sheet.styleMap;
+export const getStyleNames = () => sheet.styleNames;
+export const getPlayRes = () => sheet.playRes;
+/** 当前样式表本体：导出/预览的拼装函数要整份喂进去 */
+export const getStyleSheet = () => sheet;
+
+/**
+ * 装入本机样式表：写死的 JP/CN 打底，本机样式表接在后面；同名以本机那份为准，
+ * 于是 JP/CN 永远存在（resolveStyle 的回退目标），但用户想重定义也拦得住。
+ */
+export function setStyleSheet(userText: string) {
+  sheet = composeSheet(userText);
 }
+
+/** 样式表里没有的绑定回退到写死的 JP/CN——云端同步下来的文档常绑着本机没有的样式 */
+export const resolveStyle = (name: string, lang: Lang): string => resolveStyleIn(sheet, name, lang);
+
+/** 预览与导出共用的 ASS 头：[Script Info] + 合并后的 [V4+ Styles] */
+export const assHead = () => assHeadOf(sheet);
 
 /** 样式的主色，统一成 rgb() 形式（调用方要拆出 "r,g,b" 拼透明度） */
 export function styleRgb(name: string | null, fallback: string): string {
-  const st = name ? styleMap[name] : null;
+  const st = name ? sheet.styleMap[name] : null;
   if (st) { const c = assColor(st.c1); return `rgb(${c.rgb.join(",")})`; }
   return fallback;
 }
 
 // ── 缺字检测 ──────────────────────────────────────────────
-// 随包字体之外，模板里引用的字体得靠系统装了同名的。
+// 随包字体之外，样式表里引用的字体得靠系统装了同名的。
 // document.fonts.check() 对本地字体不可靠，用经典的 canvas 宽度比对法：
 // 拿目标字体和一个必然不存在的族名量同一串字，宽度不同就说明目标字体真被用上了。
 const PROBE = "汉字AWMil測試0123";

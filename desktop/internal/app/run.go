@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/Ricori/finoka/desktop/internal/assstyles"
 	"github.com/Ricori/finoka/desktop/internal/cloud"
 	"github.com/Ricori/finoka/desktop/internal/library"
 	"github.com/Ricori/finoka/desktop/internal/plugins"
@@ -61,6 +62,10 @@ func Run(assets fs.FS) error {
 	if err != nil {
 		return err
 	}
+	assStyleService, err := assstyles.New(dataDirectory)
+	if err != nil {
+		return err
+	}
 	// Constructed after preferences so the first launch can lift any history
 	// still sitting in preferences.json before that file is rewritten.
 	taskHistoryService, err := taskhistory.New(dataDirectory)
@@ -92,6 +97,10 @@ func Run(assets fs.FS) error {
 	if err != nil {
 		return err
 	}
+	// Plugins reach subtitle documents through the same provider the editor
+	// uses, so a plugin write goes through the sidecar's revision check rather
+	// than touching document.json behind the editor's back.
+	plugins.SetDocuments(pluginService, providerService)
 	cloudService, err := cloud.New(dataDirectory, manager, libraryService)
 	if err != nil {
 		return err
@@ -111,6 +120,7 @@ func Run(assets fs.FS) error {
 			application.NewService(cloudService),
 			application.NewService(pluginService),
 			application.NewService(preferencesService),
+			application.NewService(assStyleService),
 			application.NewService(taskHistoryService),
 			application.NewService(windowService),
 			application.NewService(updateService),

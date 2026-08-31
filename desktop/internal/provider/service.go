@@ -8,12 +8,22 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/Ricori/finoka/desktop/internal/sidecar"
 )
 
 var validTaskID = regexp.MustCompile(`^[0-9a-f]{32}$`)
+
+// runtimeTargets is the closed set InstallRuntime forwards to the sidecar: the
+// bulk targets plus OPTIONAL_TOOLS from finoka/provision.py. The rejection
+// message is derived from it rather than written out again, because the two
+// drifted apart once already -- aria2c was added to the Python side and this
+// list still refused it, naming the old tools in the error.
+var runtimeTargets = []string{"media", "runtime", "models", "all", "git", "yt-dlp", "tokcount", "aria2c", "node", "pot-provider", "video-tools", "optional-tools"}
+var removableRuntimeGroups = []string{"video-tools", "optional-tools"}
 
 type caller interface {
 	DoJSON(context.Context, string, string, any, any) error
@@ -72,8 +82,8 @@ func (s *Service) RuntimeProvisionStatus() (map[string]any, error) {
 }
 
 func (s *Service) InstallRuntime(target string) (map[string]any, error) {
-	if target != "media" && target != "runtime" && target != "models" && target != "all" && target != "git" && target != "yt-dlp" && target != "tokcount" {
-		return nil, errors.New("runtime target must be media, runtime, models, all, git, yt-dlp, or tokcount")
+	if !slices.Contains(runtimeTargets, target) {
+		return nil, fmt.Errorf("runtime target must be one of: %s", strings.Join(runtimeTargets, ", "))
 	}
 	var result map[string]any
 	err := s.provider.DoJSON(context.Background(), http.MethodPost, "/v1/runtime/provision", map[string]any{"target": target}, &result)
@@ -85,6 +95,17 @@ func (s *Service) InstallRuntime(target string) (map[string]any, error) {
 func (s *Service) RemoveRuntime() (map[string]any, error) {
 	var result map[string]any
 	err := s.provider.DoJSON(context.Background(), http.MethodDelete, "/v1/runtime/provision", nil, &result)
+	return result, err
+}
+
+// RemoveRuntimeGroup removes one managed optional-tool group without touching
+// the required runtime, models, tasks, subtitles, or user settings.
+func (s *Service) RemoveRuntimeGroup(target string) (map[string]any, error) {
+	if !slices.Contains(removableRuntimeGroups, target) {
+		return nil, fmt.Errorf("removable runtime group must be one of: %s", strings.Join(removableRuntimeGroups, ", "))
+	}
+	var result map[string]any
+	err := s.provider.DoJSON(context.Background(), http.MethodDelete, "/v1/runtime/provision/group", map[string]any{"target": target}, &result)
 	return result, err
 }
 

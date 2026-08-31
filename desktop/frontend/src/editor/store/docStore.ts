@@ -1,6 +1,7 @@
 import { createStore } from '../../home/lib/createStore';
 import { TRACK_PALETTE } from '../constants';
-import { styleRgb } from '../ass';
+import { trackNameOf } from '../../subtitles/build';
+import { resolveStyle, styleRgb } from '../ass';
 import type { Lang, Peaks, Seg, Ti, Track, TrackMeta } from '../types';
 
 export interface KnowledgeLearningState {
@@ -19,8 +20,6 @@ interface DocState {
   segs: Seg[];              // 默认轨（AI 转写+翻译）
   tracks: Track[];          // 自定义轨（说话人/注释）
   trackMeta: TrackMeta | null;   // 默认轨展示元数据（存服务端）
-  assTemplate: string;      // 全局 ASS 样式模板原文（存服务端）
-  isAdmin: boolean;         // 用 ADMIN_TOKEN 登录：模板全站共享，只有管理员能改
   knowledgeBase: string;    // 本视频转写时选择的知识库
   canLearnKnowledge: boolean;
   knowledgeLearning: KnowledgeLearningState;
@@ -32,7 +31,7 @@ interface DocState {
 }
 
 export const docStore = createStore<DocState>({
-  segs: [], tracks: [], trackMeta: null, assTemplate: "", isAdmin: false,
+  segs: [], tracks: [], trackMeta: null,
   knowledgeBase: "", canLearnKnowledge: false, knowledgeLearning: { status: "idle" },
   rev: 0, title: "", videoFp: null, peaks: null, version: 0,
 });
@@ -48,9 +47,7 @@ export function segsOf(ti: Ti): Seg[] {
 
 export function trackName(ti: Ti): string {
   const d = docStore.get();
-  return ti < 0
-    ? (d.trackMeta?.name || "默认轨")
-    : (d.tracks[ti]?.name || ("轨道 " + (ti + 1)));
+  return trackNameOf({ segs: d.segs, tracks: d.tracks, trackMeta: d.trackMeta }, ti);
 }
 
 /** 定位某句在哪条轨/第几个。选中集合存的是对象引用，位置得现查 */
@@ -74,5 +71,7 @@ export function laneColor(ti: Ti, lang: Lang): string {
   const tr = docStore.get().tracks[ti];
   const fb = TRACK_PALETTE[ti % TRACK_PALETTE.length];
   if (!tr) return fb;
-  return styleRgb(tr[lang].style || (lang === "ja" ? tr.zh.style : tr.ja.style), fb);
+  // 绑了本机没有的样式时跟着预览一起回退到 JP/CN，块的颜色才不会和画面上的字对不上
+  const bound = tr[lang].style || (lang === "ja" ? tr.zh.style : tr.ja.style);
+  return styleRgb(bound ? resolveStyle(bound, lang) : null, fb);
 }

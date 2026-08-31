@@ -15,8 +15,15 @@ from collections import deque
 from pathlib import Path
 from typing import Any
 
-OPTIONAL_TOOLS = ("git", "yt-dlp", "tokcount")
-TARGETS = {"media", "runtime", "models", "all", *OPTIONAL_TOOLS}
+OPTIONAL_TOOLS = ("git", "yt-dlp", "tokcount", "aria2c", "node", "pot-provider")
+
+# 按组安装
+TOOL_GROUPS = {
+    "video-tools": ("yt-dlp", "aria2c", "node", "pot-provider"),
+    "optional-tools": ("git", "tokcount"),
+}
+REMOVABLE_TOOL_GROUPS = frozenset(TOOL_GROUPS)
+TARGETS = {"media", "runtime", "models", "all", *OPTIONAL_TOOLS, *TOOL_GROUPS}
 PIPELINE_MODELS = ("separator", "whisper", "qwen-referee")
 
 # The two runtime buttons differ only in how far they go, so each target says so
@@ -31,6 +38,11 @@ START_MESSAGES = {
     "git": "正在准备安装可选工具 Git",
     "yt-dlp": "正在准备安装可选工具 yt-dlp",
     "tokcount": "正在准备安装可选工具 tokcount",
+    "aria2c": "正在准备安装可选工具 aria2c",
+    "node": "正在准备安装可选工具 Node.js",
+    "pot-provider": "正在准备安装 PO Token 生成器",
+    "video-tools": "正在准备安装视频下载工具",
+    "optional-tools": "正在准备安装可选工具",
 }
 DONE_MESSAGES = {
     "media": "FFmpeg 与 FFprobe 已准备就绪",
@@ -40,6 +52,11 @@ DONE_MESSAGES = {
     "git": "可选工具 Git 已安装并校验完成",
     "yt-dlp": "可选工具 yt-dlp 已安装并校验完成",
     "tokcount": "可选工具 tokcount 已安装并校验完成",
+    "aria2c": "可选工具 aria2c 已安装并校验完成",
+    "node": "可选工具 Node.js 已安装并校验完成",
+    "pot-provider": "PO Token 生成器已安装并校验完成",
+    "video-tools": "视频下载工具已安装并校验完成",
+    "optional-tools": "可选工具已安装并校验完成",
 }
 CANCELLED_MESSAGE = "已取消；已下载的部分会保留，下次继续时不必重头再来"
 
@@ -277,7 +294,10 @@ class RuntimeProvisioner:
 
     def start(self, target: str) -> dict[str, Any]:
         if target not in TARGETS:
-            raise RuntimeProvisionError("target must be media, runtime, models, all, git, yt-dlp, or tokcount")
+            raise RuntimeProvisionError(
+                "target must be one of: media, runtime, models, all, "
+                + ", ".join((*OPTIONAL_TOOLS, *TOOL_GROUPS))
+            )
         if target == "media" and not self._media_supported:
             raise RuntimeProvisionError(f"managed FFmpeg is unavailable on {self.platform}")
         if target != "media" and not self._runtime_supported:
@@ -350,7 +370,9 @@ class RuntimeProvisioner:
 
             ensure_store(self.paths)
             self._stop_if_cancelled()
-            if target in OPTIONAL_TOOLS:
+            if target in TOOL_GROUPS:
+                self._install_tool_group(target)
+            elif target in OPTIONAL_TOOLS:
                 self._install_optional_tool(target)
             if target == "media":
                 self._install_media_tools()
@@ -388,6 +410,23 @@ class RuntimeProvisioner:
                 self._update(state="cancelled", stage="cancelled", message=CANCELLED_MESSAGE, resource="", progress=None, error=None)
                 return
             self._update(state="failed", stage="failed", message=str(exc), error={"code": "runtime_install_failed", "message": str(exc)}, progress=None)
+
+    def _install_tool_group(self, group: str) -> None:
+        """安装一组工具。
+
+        组员里可能有当前清单还没声明的资源（例如尚未发布的 pot-provider），
+        那种情况跳过而不是让整组失败：装上其余几样仍然有用，缺的那样由
+        「还缺什么」的上报去提示。
+        """
+
+        assert self.resources is not None
+        for resource_id in TOOL_GROUPS[group]:
+            self._stop_if_cancelled()
+            if resource_id not in self.resources.resources:
+                continue
+            if self.resources.status(resource_id).state == "ready":
+                continue
+            self._install_optional_tool(resource_id)
 
     def _install_optional_tool(self, resource_id: str) -> None:
         assert self.resources is not None
@@ -567,6 +606,58 @@ class RuntimeProvisioner:
             resource="",
             stage="completed",
             message="运行时、模型、可选工具与下载缓存已全部删除；任务、字幕和设置已保留",
+            progress=None,
+            error=None,
+        )
+        return self.status()
+
+    def remove_tool_group(self, group: str) -> dict[str, Any]:
+        """Remove one managed optional-tool group and leave every other asset intact."""
+
+        if group not in REMOVABLE_TOOL_GROUPS:
+            raise RuntimeProvisionError("仅支持卸载视频下载工具或可选工具")
+        if self.paths is None or self.resources is None:
+            raise RuntimeProvisionError("FineSub runtime installer is unavailable")
+        with self._lock:
+            if self._job["state"] == "running":
+                raise RuntimeProvisionError("安装任务运行中，无法卸载工具；请先取消安装")
+
+        runtime_root = self.paths.runtime.resolve()
+        targets: list[Path] = []
+        for resource_id in TOOL_GROUPS[group]:
+            if resource_id not in self.resources.resources:
+                continue
+            resource_root = self.resources.install_path(resource_id).parent.resolve()
+            if resource_root == runtime_root or runtime_root not in resource_root.parents:
+                raise RuntimeProvisionError(f"拒绝删除托管运行时之外的路径：{resource_root}")
+            targets.append(resource_root)
+
+        failures: list[str] = []
+        for target in targets:
+            try:
+                _remove_managed_tree(target)
+            except OSError as error:
+                failures.append(f"{target.name}（{error.strerror or error}）")
+        if failures:
+            detail = "以下工具未能完全卸载，可能有文件正在被占用：" + "、".join(failures)
+            self._update(
+                state="failed",
+                target=f"remove-{group}",
+                resource="",
+                stage="failed",
+                message=detail,
+                progress=None,
+                error={"code": "remove_failed", "message": detail},
+            )
+            raise RuntimeProvisionError(detail)
+
+        label = "视频下载工具" if group == "video-tools" else "可选工具"
+        self._update(
+            state="completed",
+            target=f"remove-{group}",
+            resource="",
+            stage="completed",
+            message=f"{label}已卸载；其他运行时与模型保持不变",
             progress=None,
             error=None,
         )
